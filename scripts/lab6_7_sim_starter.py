@@ -273,6 +273,7 @@ class ObstacleAvoidingWaypointController:
         distance_error = sqrt((goal_position["x"] - self.current_position["x"]) ** 2 + (goal_position["y"] - self.current_position["y"]) ** 2)
         angle_to_goal = atan2(goal_position["y"] - self.current_position["y"], goal_position["x"] - self.current_position["x"])
         angle_error = atan2(sin(angle_to_goal - self.current_position["theta"]), cos(angle_to_goal - self.current_position["theta"]))
+
         cmd_linear_vel = self.waypoint_linear_pid.control(distance_error, rospy.get_time())
         cmd_angular_vel = self.waypoint_angular_pid.control(angle_error, rospy.get_time())
 
@@ -287,6 +288,8 @@ class ObstacleAvoidingWaypointController:
         ctrl_msg = Twist()
 
         ######### Your code starts here #########
+
+        self.robot_laserscan_callback(self.laserscan)  # update self.ir_distance
         if self.ir_distance is not None:
             error = self.wall_following_desired_distance - self.ir_distance
             u = self.obstacle_pid.control(error, rospy.get_time())
@@ -296,6 +299,7 @@ class ObstacleAvoidingWaypointController:
             ctrl_msg.linear.x = 0.0
             ctrl_msg.angular.z = 0.0
             u = 0.0
+            return
 
         ######### Your code ends here #########
 
@@ -411,11 +415,12 @@ class ObstacleAvoidingWaypointController:
 
             if distance_error is None or angle_error is None:
                 continue
-            if distance_error < 0.1:
+            if distance_error < 0.01:
                 current_waypoint_idx += 1
             else:
                 obstacle_distances = self.laserscan_distances_to_point(goal_position, cone_angle, visualize=True)
                 if len(obstacle_distances) > 0 and min(obstacle_distances) < distance_from_wall_safety:
+
                     self.obstacle_avoiding_control(visualize=True)
                 else:
                     ctrl_msg = Twist()
