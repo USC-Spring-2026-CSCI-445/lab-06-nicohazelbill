@@ -51,13 +51,32 @@ class PIDController:
         assert u_min < u_max, "u_min should be less than u_max"
         # initialize PID variables here
         ######### Your code starts here #########
-
+        self.kP = kP
+        self.kI = kI
+        self.kD = kD
+        self.kS = kS
+        self.u_min = u_min
+        self.u_max = u_max
+        self.t_prev = rospy.get_time()
+        self.err_prev = 0.0
+        self.err_sum = 0.0
         ######### Your code ends here #########
 
     def control(self, err, t):
         # compute PID control action here
         ######### Your code starts here #########
+        dt = t - self.t_prev
+        if dt <= 0.0:
+            return 0.0  # No control action if time has not advanced
+        self.t_prev = t
 
+        de = err - self.err_prev
+        self.err_prev = err
+        self.err_sum += err * dt
+
+        u = self.kP * err + self.kI * self.err_sum + self.kD * de / dt + self.kS * (1 if err > 0 else -1 if err < 0 else 0)
+        return max(self.u_min, min(self.u_max, u))
+        
         ######### Your code ends here #########
 
 
@@ -71,14 +90,30 @@ class PDController:
         assert u_min < u_max, "u_min should be less than u_max"
         # Initialize PD variables here
         ######### Your code starts here #########
-
+        self.kP = kP
+        self.kD = kD
+        self.kS = kS
+        self.u_min = u_min
+        self.u_max = u_max
+        self.t_prev = rospy.get_time()
+        self.err_prev = 0.0
         ######### Your code ends here #########
 
     def control(self, err, t):
         dt = t - self.t_prev
         # Compute PD control action here
         ######### Your code starts here #########
+        if dt <= 0.0:
+            return 0.0  # No control action if time has not advanced
+        self.t_prev = t
 
+        de = err - self.err_prev
+        self.err_prev = err 
+
+        u = self.kP * err + self.kD * de / dt + self.kS * (1 if err > 0 else -1 if err < 0 else 0)
+        
+        return max(self.u_min, min(self.u_max, u))
+        
         ######### Your code ends here #########
 
 
@@ -115,6 +150,8 @@ class ObstacleFreeWaypointController:
 
         # define linear and angular PID controllers here
         ######### Your code starts here #########
+        self.linear_pid = PIDController(kP=1.0, kI=0.0, kD=0.1, kS=0.0, u_min=-0.26, u_max=0.26)
+        self.angular_pid = PIDController(kP=4.0, kI=0.0, kD=0.2, kS=0.0, u_min=-2.86, u_max=2.86)
 
         ######### Your code ends here #########
 
@@ -134,6 +171,9 @@ class ObstacleFreeWaypointController:
 
         # Calculate error in position and orientation
         ######### Your code starts here #########
+        distance_error = sqrt((goal_position["x"] - self.current_position["x"]) ** 2 + (goal_position["y"] - self.current_position["y"]) ** 2)
+        angle_to_goal = atan2(goal_position["y"] - self.current_position["y"], goal_position["x"] - self.current_position["x"])
+        angle_error = atan2(sin(angle_to_goal - self.current_position["theta"]), cos(angle_to_goal - self.current_position["theta"]))
 
         ######### Your code ends here #########
 
@@ -143,17 +183,33 @@ class ObstacleFreeWaypointController:
         rate = rospy.Rate(20)  # 20 Hz
         ctrl_msg = Twist()
 
-        # initialize first waypoint
         current_waypoint_idx = 0
 
         while not rospy.is_shutdown():
 
             # Travel through waypoints one at a time, checking if robot is close enough
             ######### Your code starts here #########
+            if current_waypoint_idx >= len(self.waypoints):
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = 0.0
+                self.robot_ctrl_pub.publish(ctrl_msg)
+                rospy.loginfo("Reached all waypoints!")
+                break
+
+            goal_position = self.waypoints[current_waypoint_idx]
+            error = self.calculate_error(goal_position)
+            if error is None:
+                continue
+            distance_error, angle_error = error
+            if distance_error < 0.01:
+                current_waypoint_idx += 1
+            else:
+                ctrl_msg.linear.x = self.linear_pid.control(distance_error, rospy.get_time())
+                ctrl_msg.angular.z = self.angular_pid.control(angle_error, rospy.get_time())
+                self.robot_ctrl_pub.publish(ctrl_msg)
 
             ######### Your code ends here #########
             rate.sleep()
-
 
 class ObstacleAvoidingWaypointController:
     def __init__(self, waypoints: List[Dict]):
@@ -179,7 +235,10 @@ class ObstacleAvoidingWaypointController:
 
         # Add PID controllers here for obstacle avoidance and waypoint following
         ######### Your code starts here #########
+        self.waypoint_linear_pid = PIDController(kP=3.0, kI=0.2, kD=0.1, kS=0.0, u_min=-0.26, u_max=0.26)
+        self.waypoint_angular_pid = PIDController(kP=4.0, kD=0.5, kI=0.2, kS=0.0, u_min=-2.86, u_max=2.86)
 
+        self.obstacle_pid = PIDController(kP=1.0, kI=0.0, kD=3.0, kS=0.0, u_min=-2.86, u_max=2.86)
         ######### Your code ends here #########
 
     def robot_laserscan_callback(self, msg: LaserScan):
@@ -211,6 +270,11 @@ class ObstacleAvoidingWaypointController:
             return None
 
         ######### Your code starts here #########
+        distance_error = sqrt((goal_position["x"] - self.current_position["x"]) ** 2 + (goal_position["y"] - self.current_position["y"]) ** 2)
+        angle_to_goal = atan2(goal_position["y"] - self.current_position["y"], goal_position["x"] - self.current_position["x"])
+        angle_error = atan2(sin(angle_to_goal - self.current_position["theta"]), cos(angle_to_goal - self.current_position["theta"]))
+        cmd_linear_vel = self.waypoint_linear_pid.control(distance_error, rospy.get_time())
+        cmd_angular_vel = self.waypoint_angular_pid.control(angle_error, rospy.get_time())
 
         ######### Your code ends here #########
 
@@ -223,6 +287,15 @@ class ObstacleAvoidingWaypointController:
         ctrl_msg = Twist()
 
         ######### Your code starts here #########
+        if self.ir_distance is not None:
+            error = self.wall_following_desired_distance - self.ir_distance
+            u = self.obstacle_pid.control(error, rospy.get_time())
+            ctrl_msg.linear.x = 0.1  # constant forward velocity
+            ctrl_msg.angular.z = u  # control to maintain distance from wall
+        else:
+            ctrl_msg.linear.x = 0.0
+            ctrl_msg.angular.z = 0.0
+            u = 0.0
 
         ######### Your code ends here #########
 
@@ -323,6 +396,32 @@ class ObstacleAvoidingWaypointController:
 
             # Travel through waypoints, checking if there is an obstacle in the way. Transition to obstacle avoidance if necessary
             ######### Your code starts here #########
+            if current_waypoint_idx >= len(self.waypoints):
+                ctrl_msg = Twist()
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = 0.0
+                self.robot_ctrl_pub.publish(ctrl_msg)
+                rospy.loginfo("Reached all waypoints!")
+                break
+            goal_position = self.waypoints[current_waypoint_idx]
+            distance_error = sqrt((goal_position["x"] - self.current_position["x"]) ** 2 + (goal_position["y"] - self.current_position["y"]) ** 2)
+            angle_to_goal = atan2(goal_position["y"] - self.current_position["y"], goal_position["x"] - self.current_position["x"])
+            angle_error = atan2(sin(angle_to_goal - self.current_position["theta"]), cos(angle_to_goal - self.current_position["theta"]))
+        
+
+            if distance_error is None or angle_error is None:
+                continue
+            if distance_error < 0.1:
+                current_waypoint_idx += 1
+            else:
+                obstacle_distances = self.laserscan_distances_to_point(goal_position, cone_angle, visualize=True)
+                if len(obstacle_distances) > 0 and min(obstacle_distances) < distance_from_wall_safety:
+                    self.obstacle_avoiding_control(visualize=True)
+                else:
+                    ctrl_msg = Twist()
+                    ctrl_msg.linear.x = self.waypoint_linear_pid.control(distance_error, rospy.get_time())
+                    ctrl_msg.angular.z = self.waypoint_angular_pid.control(angle_error, rospy.get_time())
+                    self.robot_ctrl_pub.publish(ctrl_msg)
 
             ######### Your code ends here #########
             rate.sleep()
