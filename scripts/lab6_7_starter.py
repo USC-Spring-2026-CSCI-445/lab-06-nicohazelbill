@@ -238,11 +238,9 @@ class ObstacleAvoidingWaypointController:
 
         # Add PID controllers here for obstacle avoidance and waypoint following
         ######### Your code starts here #########
-        self.waypoint_linear_pid = PIDController(kP=5.0, kI=0.05, kD=0.1, kS=0.0, u_min=-0.26, u_max=0.26)
-        self.waypoint_angular_pid = PIDController(kP=4.0, kI=0.05, kD=0.5, kS=0.0, u_min=-2.86, u_max=2.86)
-
-        self.obstacle_pid = PDController(kP=1.0, kD=2.0, kS = 0.0, u_min=-2.86, u_max=2.86)
-        ######### Your code ends here #########
+        self.obstacle_pid = PIDController(kP=1.0, kI=0.0, kD=3.0, kS=0.0, u_min=-2.86, u_max=2.86)
+        self.waypoint_angular_pid = PIDController(kP=4.0, kD=0.5, kI=0.2, kS=0.0, u_min=-2.86, u_max=2.86)
+        self.waypoint_linear_pid = PIDController(kP=3.0, kI=0.2, kD=0.1, kS=0.0, u_min=-0.26, u_max=0.26)        ######### Your code ends here #########
 
     def sensor_state_callback(self, state: SensorState):
         raw = state.cliff
